@@ -7,7 +7,7 @@ import streamlit as st
 import os
 import time
 import glob
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 from audio_manager import AudioManager
@@ -15,140 +15,256 @@ from recorder import Recorder, RecordingConfig, merge_tracks, get_track_count
 
 # ── Page Config ──────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Record Screen + Audio",
+    page_title="Record Screen + Audio — OpenTF",
     page_icon="🎬",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 # ── Custom CSS ───────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-    /* ── Global ─────────────────────────────────────────────── */
-    .block-container { padding-top: 2rem; }
-
-    /* ── Status Cards ───────────────────────────────────────── */
-    .status-card {
-        padding: 1rem 1.25rem;
-        border-radius: 12px;
-        margin-bottom: 0.75rem;
-        border: 1px solid rgba(128,128,128,0.15);
+    /* ── Reset & Global ────────────────────────────────────── */
+    .block-container {
+        padding: 2rem 3rem 3rem 3rem;
+        max-width: 1100px;
     }
-    .status-ok   { background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%); border-left: 4px solid #4caf50; }
-    .status-warn { background: linear-gradient(135deg, #fff8e1 0%, #fff3e0 100%); border-left: 4px solid #ff9800; }
-    .status-err  { background: linear-gradient(135deg, #ffebee 0%, #fce4ec 100%); border-left: 4px solid #f44336; }
+    h1, h2, h3 { font-weight: 700 !important; }
 
-    .status-card .label { font-size: 0.8rem; color: #666; text-transform: uppercase; letter-spacing: 0.05em; }
-    .status-card .value { font-size: 1rem; font-weight: 600; color: #222; margin-top: 2px; }
-
-    /* ── Recording Indicator ────────────────────────────────── */
-    @keyframes pulse-red {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.4; }
+    /* ── Hero Header ───────────────────────────────────────── */
+    .hero {
+        text-align: center;
+        padding: 1.5rem 0 0.5rem 0;
     }
-    .rec-dot {
-        display: inline-block;
-        width: 14px; height: 14px;
-        background: #f44336;
-        border-radius: 50%;
-        animation: pulse-red 1.2s ease-in-out infinite;
-        margin-right: 8px;
-        vertical-align: middle;
+    .hero h1 {
+        font-size: 2.2rem;
+        margin-bottom: 0.25rem;
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+    .hero p {
+        color: #666;
+        font-size: 1rem;
+        margin-top: 0;
+    }
+
+    /* ── Source Cards ───────────────────────────────────────── */
+    .source-card {
+        background: #ffffff;
+        border: 2px solid #e8e8e8;
+        border-radius: 16px;
+        padding: 1.5rem;
+        text-align: center;
+        transition: all 0.25s ease;
+        min-height: 160px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+    }
+    .source-card.active {
+        border-color: #4361ee;
+        background: linear-gradient(135deg, #f0f4ff 0%, #e8edff 100%);
+        box-shadow: 0 4px 20px rgba(67, 97, 238, 0.15);
+    }
+    .source-card.inactive {
+        opacity: 0.5;
+        border-color: #ddd;
+        background: #fafafa;
+    }
+    .source-icon {
+        font-size: 2.5rem;
+        margin-bottom: 0.5rem;
+    }
+    .source-title {
+        font-size: 1rem;
+        font-weight: 700;
+        color: #1a1a2e;
+        margin-bottom: 0.25rem;
+    }
+    .source-desc {
+        font-size: 0.78rem;
+        color: #777;
+        line-height: 1.3;
+    }
+    .source-device {
+        margin-top: 0.5rem;
+        font-size: 0.72rem;
+        color: #4361ee;
+        font-weight: 600;
+        background: rgba(67, 97, 238, 0.08);
+        padding: 2px 10px;
+        border-radius: 20px;
+    }
+
+    /* ── Big Record Button ─────────────────────────────────── */
+    .big-btn-wrap {
+        text-align: center;
+        margin: 1.5rem 0 1rem 0;
+    }
+
+    /* ── Recording Banner ──────────────────────────────────── */
+    @keyframes pulse-glow {
+        0%, 100% { box-shadow: 0 0 20px rgba(244, 67, 54, 0.3); }
+        50% { box-shadow: 0 0 40px rgba(244, 67, 54, 0.6); }
+    }
+    @keyframes pulse-dot {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.5; transform: scale(0.8); }
     }
     .rec-banner {
-        background: linear-gradient(135deg, #ff1744 0%, #d50000 100%);
+        background: linear-gradient(135deg, #d32f2f 0%, #b71c1c 100%);
         color: white;
-        padding: 1rem 1.5rem;
-        border-radius: 12px;
-        font-size: 1.1rem;
-        font-weight: 600;
-        margin-bottom: 1rem;
+        padding: 1.25rem 2rem;
+        border-radius: 16px;
         display: flex;
         align-items: center;
         justify-content: space-between;
+        margin-bottom: 1.5rem;
+        animation: pulse-glow 2s ease-in-out infinite;
     }
-    .rec-timer {
-        font-family: 'SF Mono', 'Fira Code', monospace;
-        font-size: 1.4rem;
-        font-weight: 700;
-    }
-
-    /* ── Device Cards ───────────────────────────────────────── */
-    .device-header {
-        font-size: 0.75rem;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        color: #888;
-        margin-bottom: 4px;
-    }
-
-    /* ── Sidebar ────────────────────────────────────────────── */
-    section[data-testid="stSidebar"] .block-container { padding-top: 1rem; }
-    section[data-testid="stSidebar"] hr { margin: 0.75rem 0; }
-
-    /* ── File List ──────────────────────────────────────────── */
-    .file-row {
-        padding: 0.6rem 1rem;
-        border-radius: 8px;
-        background: #f8f9fa;
-        margin-bottom: 0.5rem;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        border: 1px solid #eee;
-    }
-    .file-name { font-weight: 600; font-size: 0.9rem; }
-    .file-meta { font-size: 0.8rem; color: #888; }
-
-    /* ── Toggle Buttons ─────────────────────────────────────── */
-    .toggle-row {
+    .rec-left {
         display: flex;
         align-items: center;
         gap: 12px;
-        padding: 0.8rem 1rem;
-        border-radius: 10px;
-        margin-bottom: 0.5rem;
-        transition: background 0.2s;
     }
-    .toggle-row:hover { background: #f5f5f5; }
-    .toggle-icon { font-size: 1.5rem; }
-    .toggle-label { font-weight: 600; }
-    .toggle-desc { font-size: 0.8rem; color: #777; }
+    .rec-dot {
+        width: 16px; height: 16px;
+        background: #fff;
+        border-radius: 50%;
+        animation: pulse-dot 1s ease-in-out infinite;
+    }
+    .rec-label {
+        font-size: 1.1rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+    }
+    .rec-timer {
+        font-family: 'SF Mono', 'Fira Code', 'Courier New', monospace;
+        font-size: 2rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+    }
 
-    /* ── Buttons ─────────────────────────────────────────────── */
+    /* ── Summary Row ───────────────────────────────────────── */
+    .summary-row {
+        display: flex;
+        justify-content: center;
+        gap: 2rem;
+        margin: 0.75rem 0 0.5rem 0;
+        flex-wrap: wrap;
+    }
+    .summary-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: #f0f4ff;
+        border: 1px solid #d0d9ff;
+        border-radius: 20px;
+        padding: 6px 16px;
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: #4361ee;
+    }
+    .summary-chip.off {
+        background: #f5f5f5;
+        border-color: #e0e0e0;
+        color: #aaa;
+        text-decoration: line-through;
+    }
+
+    /* ── Status Pills ──────────────────────────────────────── */
+    .dep-row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: center;
+        margin-bottom: 1rem;
+    }
+    .dep-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+    .dep-ok {
+        background: #e8f5e9;
+        color: #2e7d32;
+    }
+    .dep-err {
+        background: #ffebee;
+        color: #c62828;
+    }
+
+    /* ── File Cards ─────────────────────────────────────────── */
+    .file-card {
+        background: #fff;
+        border: 1px solid #eee;
+        border-radius: 12px;
+        padding: 1rem 1.25rem;
+        margin-bottom: 0.5rem;
+        transition: border-color 0.2s;
+    }
+    .file-card:hover {
+        border-color: #4361ee;
+    }
+
+    /* ── Section Headers ───────────────────────────────────── */
+    .section-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 2rem 0 1rem 0;
+        padding-bottom: 0.5rem;
+        border-bottom: 2px solid #f0f0f0;
+    }
+    .section-head h3 {
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+
+    /* ── Hide default Streamlit stuff ──────────────────────── */
+    #MainMenu { visibility: hidden; }
+    footer { visibility: hidden; }
+    header[data-testid="stHeader"] { background: transparent; }
+
+    /* ── Buttons ────────────────────────────────────────────── */
     .stButton > button {
         border-radius: 10px;
         font-weight: 600;
-        padding: 0.5rem 1.5rem;
         transition: all 0.2s;
+    }
+    div[data-testid="stHorizontalBlock"] .stButton > button[kind="primary"] {
+        font-size: 1.05rem;
+        padding: 0.6rem 2rem;
     }
 </style>
 """, unsafe_allow_html=True)
 
 
-# ── Session State Initialization ─────────────────────────────────────────────
+# ── Session State ────────────────────────────────────────────────────────────
 
 def init_state():
-    """Initialize all session state variables."""
     defaults = {
         "audio_manager": None,
         "recorder": None,
         "video_devices": [],
         "audio_devices": [],
         "recording": False,
-        "start_time": None,
         "last_message": "",
-        "last_message_type": "info",  # info, success, error, warning
-        # Toggle states
+        "last_message_type": "info",
         "opt_screen": True,
         "opt_system_audio": True,
         "opt_mic": True,
-        # Device selections (index in the device list)
         "sel_screen": None,
         "sel_blackhole": None,
         "sel_mic": None,
-        # Merge
         "merge_file": None,
+        "show_devices": False,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -156,269 +272,224 @@ def init_state():
 
 init_state()
 
-# ── Lazy Init ────────────────────────────────────────────────────────────────
-
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 RECORDINGS_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), "Recordings")
 
 
-def get_audio_manager() -> AudioManager:
+def get_am() -> AudioManager:
     if st.session_state.audio_manager is None:
         st.session_state.audio_manager = AudioManager()
     return st.session_state.audio_manager
 
 
-def get_recorder() -> Recorder:
+def get_rec() -> Recorder:
     if st.session_state.recorder is None:
-        st.session_state.recorder = Recorder(get_audio_manager(), RECORDINGS_DIR)
+        st.session_state.recorder = Recorder(get_am(), RECORDINGS_DIR)
     return st.session_state.recorder
 
 
 def refresh_devices():
-    am = get_audio_manager()
+    am = get_am()
     v, a = am.discover_devices()
     st.session_state.video_devices = v
     st.session_state.audio_devices = a
-    # Auto-select defaults
     bh = am.find_blackhole(a)
     mic = am.find_default_mic(a)
     scr = am.find_screen(v)
-    if bh and st.session_state.sel_blackhole is None:
+    if bh:
         st.session_state.sel_blackhole = bh.index
-    if mic and st.session_state.sel_mic is None:
+    if mic:
         st.session_state.sel_mic = mic.index
-    if scr and st.session_state.sel_screen is None:
+    if scr:
         st.session_state.sel_screen = scr.index
 
 
-# Initial device discovery
 if not st.session_state.video_devices and not st.session_state.audio_devices:
     refresh_devices()
 
 
-# ── Helper: format seconds ───────────────────────────────────────────────────
-
-def fmt_duration(seconds: float) -> str:
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = int(seconds % 60)
-    if h > 0:
-        return f"{h:02d}:{m:02d}:{s:02d}"
-    return f"{m:02d}:{s:02d}"
+def fmt_time(sec: float) -> str:
+    h, m, s = int(sec // 3600), int((sec % 3600) // 60), int(sec % 60)
+    return f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
 
 
-def fmt_size(bytes_: int) -> str:
-    if bytes_ < 1024:
-        return f"{bytes_} B"
-    elif bytes_ < 1024**2:
-        return f"{bytes_/1024:.1f} KB"
-    elif bytes_ < 1024**3:
-        return f"{bytes_/1024**2:.1f} MB"
-    else:
-        return f"{bytes_/1024**3:.2f} GB"
+def fmt_size(b: int) -> str:
+    if b < 1024**2:
+        return f"{b/1024:.0f} KB"
+    if b < 1024**3:
+        return f"{b/1024**2:.1f} MB"
+    return f"{b/1024**3:.2f} GB"
+
+
+def get_device_name(devices, idx):
+    for d in devices:
+        if d.index == idx:
+            return d.name
+    return "Auto"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  SIDEBAR
+#  HEADER
 # ══════════════════════════════════════════════════════════════════════════════
 
-with st.sidebar:
-    st.markdown("## ⚙️ Settings")
+st.markdown("""
+<div class="hero">
+    <h1>Record Screen + Audio</h1>
+    <p>Capture screen, system audio, and microphone — all at once</p>
+</div>
+""", unsafe_allow_html=True)
 
-    # ── Dependency Status ────────────────────────────────────────────────
-    st.markdown("#### System Status")
-    deps = get_audio_manager().check_dependencies()
+recorder = get_rec()
 
-    for name, ok in deps.items():
-        icon = "✅" if ok else "❌"
-        st.markdown(f"{icon} **{name}**")
+# ── Dependency pills ─────────────────────────────────────────────────────────
+deps = get_am().check_dependencies()
+has_mo = get_am().has_multi_output()
 
-    if not all(deps.values()):
-        st.warning("Run `./setup.sh` or install missing dependencies with Homebrew.")
+pills_html = '<div class="dep-row">'
+for name, ok in deps.items():
+    cls = "dep-ok" if ok else "dep-err"
+    icon = "✓" if ok else "✗"
+    pills_html += f'<span class="dep-pill {cls}">{icon} {name}</span>'
 
-    has_mo = get_audio_manager().has_multi_output()
-    icon_mo = "✅" if has_mo else "⚠️"
-    st.markdown(f"{icon_mo} **Multi-Output Device**")
-    if not has_mo:
-        st.caption("Create in Audio MIDI Setup so you can hear audio while recording.")
+mo_cls = "dep-ok" if has_mo else "dep-err"
+mo_icon = "✓" if has_mo else "!"
+pills_html += f'<span class="dep-pill {mo_cls}">{mo_icon} Multi-Output</span>'
+pills_html += '</div>'
+st.markdown(pills_html, unsafe_allow_html=True)
 
-    st.divider()
-
-    # ── Saved Audio Settings ─────────────────────────────────────────────
-    snap = get_audio_manager().snapshot
-    if snap:
-        st.markdown("#### 💾 Saved Audio State")
-        st.caption("Will be restored when recording stops.")
-        st.code(
-            f"Output : {snap.output_device}\n"
-            f"Input  : {snap.input_device}\n"
-            f"Volume : {snap.output_volume}%",
-            language=None,
-        )
-        st.divider()
-
-    # ── Device Selection ─────────────────────────────────────────────────
-    st.markdown("#### 🎛️ Devices")
-
-    if st.button("🔄 Refresh Devices", use_container_width=True):
-        refresh_devices()
-        st.rerun()
-
-    vdevs = st.session_state.video_devices
-    adevs = st.session_state.audio_devices
-
-    if vdevs:
-        screen_options = {d.index: d.name for d in vdevs}
-        default_scr = st.session_state.sel_screen if st.session_state.sel_screen in screen_options else list(screen_options.keys())[0]
-        st.session_state.sel_screen = st.selectbox(
-            "Screen",
-            options=list(screen_options.keys()),
-            format_func=lambda x: screen_options[x],
-            index=list(screen_options.keys()).index(default_scr),
-        )
-
-    if adevs:
-        audio_options = {d.index: d.name for d in adevs}
-
-        # BlackHole selector
-        bh_default = st.session_state.sel_blackhole if st.session_state.sel_blackhole in audio_options else list(audio_options.keys())[0]
-        st.session_state.sel_blackhole = st.selectbox(
-            "System Audio (BlackHole)",
-            options=list(audio_options.keys()),
-            format_func=lambda x: audio_options[x],
-            index=list(audio_options.keys()).index(bh_default),
-        )
-
-        # Mic selector
-        mic_default = st.session_state.sel_mic if st.session_state.sel_mic in audio_options else list(audio_options.keys())[0]
-        st.session_state.sel_mic = st.selectbox(
-            "Microphone",
-            options=list(audio_options.keys()),
-            format_func=lambda x: audio_options[x],
-            index=list(audio_options.keys()).index(mic_default),
-        )
-
-    st.divider()
-
-    # ── Advanced ─────────────────────────────────────────────────────────
-    with st.expander("Advanced Settings"):
-        framerate = st.select_slider("Frame Rate", options=[15, 24, 30, 60], value=30)
-        video_br = st.select_slider("Video Bitrate", options=["4000k", "6000k", "8000k", "12000k", "16000k"], value="8000k")
-        audio_br_sys = st.select_slider("System Audio Bitrate", options=["96k", "128k", "192k", "256k", "320k"], value="192k")
-        audio_br_mic = st.select_slider("Mic Bitrate", options=["64k", "96k", "128k", "192k"], value="128k")
-
-    st.divider()
-    st.caption("Record Screen + Audio — OpenTF")
-    st.caption(f"Recordings saved to: `Recordings/`")
-
+if not all(deps.values()):
+    st.error("Missing dependencies. Run `brew install ffmpeg switchaudio-osx` and install BlackHole from existential.audio/blackhole")
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  MAIN AREA
+#  RECORDING BANNER (when active)
 # ══════════════════════════════════════════════════════════════════════════════
-
-# ── Header ───────────────────────────────────────────────────────────────────
-st.markdown("# 🎬 Record Screen + Audio")
-st.caption("Record your Mac screen, system audio (Teams/Zoom/YouTube), and microphone — all in one.")
-
-# ── Recording Banner ─────────────────────────────────────────────────────────
-recorder = get_recorder()
 
 if recorder.is_recording:
     elapsed = recorder.elapsed_seconds
-    st.markdown(
-        f"""<div class="rec-banner">
-            <span><span class="rec-dot"></span> RECORDING</span>
-            <span class="rec-timer">{fmt_duration(elapsed)}</span>
-        </div>""",
-        unsafe_allow_html=True,
+    st.markdown(f"""
+    <div class="rec-banner">
+        <div class="rec-left">
+            <div class="rec-dot"></div>
+            <span class="rec-label">RECORDING</span>
+        </div>
+        <span class="rec-timer">{fmt_time(elapsed)}</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ── Status message ───────────────────────────────────────────────────────────
+if st.session_state.last_message:
+    t = st.session_state.last_message_type
+    {"success": st.success, "error": st.error, "warning": st.warning}.get(t, st.info)(
+        st.session_state.last_message
     )
 
-# ── Status Message ───────────────────────────────────────────────────────────
-if st.session_state.last_message:
-    msg_type = st.session_state.last_message_type
-    if msg_type == "success":
-        st.success(st.session_state.last_message)
-    elif msg_type == "error":
-        st.error(st.session_state.last_message)
-    elif msg_type == "warning":
-        st.warning(st.session_state.last_message)
-    else:
-        st.info(st.session_state.last_message)
+# ══════════════════════════════════════════════════════════════════════════════
+#  SOURCE CARDS
+# ══════════════════════════════════════════════════════════════════════════════
 
-# ── Recording Controls ───────────────────────────────────────────────────────
-st.markdown("### What to Record")
+scr_name = get_device_name(st.session_state.video_devices, st.session_state.sel_screen)
+bh_name = get_device_name(st.session_state.audio_devices, st.session_state.sel_blackhole)
+mic_name = get_device_name(st.session_state.audio_devices, st.session_state.sel_mic)
 
-col1, col2, col3 = st.columns(3)
+col1, col2, col3 = st.columns(3, gap="medium")
 
 with col1:
-    st.session_state.opt_screen = st.toggle(
-        "🖥️ Screen",
-        value=st.session_state.opt_screen,
-        help="Record your Mac screen (full display)",
-        disabled=recorder.is_recording,
+    cls = "active" if st.session_state.opt_screen else "inactive"
+    dev_tag = f'<div class="source-device">{scr_name}</div>' if st.session_state.opt_screen else ""
+    st.markdown(f"""
+    <div class="source-card {cls}">
+        <div class="source-icon">🖥️</div>
+        <div class="source-title">Screen</div>
+        <div class="source-desc">Full display capture with cursor</div>
+        {dev_tag}
+    </div>
+    """, unsafe_allow_html=True)
+    st.session_state.opt_screen = st.checkbox(
+        "Enable Screen", value=st.session_state.opt_screen,
+        disabled=recorder.is_recording, key="chk_screen", label_visibility="collapsed"
     )
-    if st.session_state.opt_screen:
-        scr_name = ""
-        for d in st.session_state.video_devices:
-            if d.index == st.session_state.sel_screen:
-                scr_name = d.name
-                break
-        st.caption(f"→ {scr_name or 'Auto-detect'}")
 
 with col2:
-    st.session_state.opt_system_audio = st.toggle(
-        "🔊 System Audio",
-        value=st.session_state.opt_system_audio,
-        help="Capture Teams/Zoom/YouTube audio via BlackHole",
-        disabled=recorder.is_recording,
+    cls = "active" if st.session_state.opt_system_audio else "inactive"
+    dev_tag = f'<div class="source-device">{bh_name}</div>' if st.session_state.opt_system_audio else ""
+    st.markdown(f"""
+    <div class="source-card {cls}">
+        <div class="source-icon">🔊</div>
+        <div class="source-title">System Audio</div>
+        <div class="source-desc">Teams · Zoom · YouTube via BlackHole</div>
+        {dev_tag}
+    </div>
+    """, unsafe_allow_html=True)
+    st.session_state.opt_system_audio = st.checkbox(
+        "Enable System Audio", value=st.session_state.opt_system_audio,
+        disabled=recorder.is_recording, key="chk_sysaudio", label_visibility="collapsed"
     )
-    if st.session_state.opt_system_audio:
-        bh_name = ""
-        for d in st.session_state.audio_devices:
-            if d.index == st.session_state.sel_blackhole:
-                bh_name = d.name
-                break
-        st.caption(f"→ {bh_name or 'Auto-detect'}")
 
 with col3:
-    st.session_state.opt_mic = st.toggle(
-        "🎙️ Microphone",
-        value=st.session_state.opt_mic,
-        help="Record your voice / room noise",
-        disabled=recorder.is_recording,
+    cls = "active" if st.session_state.opt_mic else "inactive"
+    dev_tag = f'<div class="source-device">{mic_name}</div>' if st.session_state.opt_mic else ""
+    st.markdown(f"""
+    <div class="source-card {cls}">
+        <div class="source-icon">🎙️</div>
+        <div class="source-title">Microphone</div>
+        <div class="source-desc">Your voice and room audio</div>
+        {dev_tag}
+    </div>
+    """, unsafe_allow_html=True)
+    st.session_state.opt_mic = st.checkbox(
+        "Enable Mic", value=st.session_state.opt_mic,
+        disabled=recorder.is_recording, key="chk_mic", label_visibility="collapsed"
     )
-    if st.session_state.opt_mic:
-        mic_name = ""
-        for d in st.session_state.audio_devices:
-            if d.index == st.session_state.sel_mic:
-                mic_name = d.name
-                break
-        st.caption(f"→ {mic_name or 'Auto-detect'}")
+
+# ── Summary chips ────────────────────────────────────────────────────────────
+active_sources = []
+if st.session_state.opt_screen:
+    active_sources.append("🖥️ Screen")
+if st.session_state.opt_system_audio:
+    active_sources.append("🔊 System Audio")
+if st.session_state.opt_mic:
+    active_sources.append("🎙️ Microphone")
+
+n = len(active_sources)
+if n == 3:
+    summary_text = "Recording everything — screen, system audio, and microphone simultaneously"
+elif n == 0:
+    summary_text = "Select at least one source to record"
+else:
+    summary_text = f"Recording: {' + '.join(active_sources)}"
+
+chips = ""
+for src in ["🖥️ Screen", "🔊 System Audio", "🎙️ Microphone"]:
+    on = src in active_sources
+    cls = "" if on else "off"
+    chips += f'<span class="summary-chip {cls}">{src}</span>'
+
+st.markdown(f'<div class="summary-row">{chips}</div>', unsafe_allow_html=True)
+st.caption(f"<center>{summary_text}</center>", unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  BIG RECORD / STOP BUTTON
+# ══════════════════════════════════════════════════════════════════════════════
 
 st.markdown("")
+_, btn_center, _ = st.columns([1, 2, 1])
 
-# ── Start / Stop Buttons ────────────────────────────────────────────────────
-btn_col1, btn_col2, _ = st.columns([1, 1, 2])
-
-with btn_col1:
+with btn_center:
     if not recorder.is_recording:
-        if st.button("⏺️ Start Recording", type="primary", use_container_width=True):
-            # Build config
+        if st.button(
+            "⏺  Start Recording" + (f"  —  {n} source{'s' if n != 1 else ''}" if n else ""),
+            type="primary",
+            use_container_width=True,
+            disabled=(n == 0),
+        ):
             cfg = RecordingConfig(
                 record_screen=st.session_state.opt_screen,
                 record_system_audio=st.session_state.opt_system_audio,
                 record_mic=st.session_state.opt_mic,
-                framerate=framerate if "framerate" in dir() else 30,
-                video_bitrate=video_br if "video_br" in dir() else "8000k",
-                audio_bitrate_system=audio_br_sys if "audio_br_sys" in dir() else "192k",
-                audio_bitrate_mic=audio_br_mic if "audio_br_mic" in dir() else "128k",
             )
-
-            # Set device objects
             for d in st.session_state.video_devices:
                 if d.index == st.session_state.sel_screen:
                     cfg.screen_device = d
-                    break
             for d in st.session_state.audio_devices:
                 if d.index == st.session_state.sel_blackhole:
                     cfg.blackhole_device = d
@@ -430,122 +501,181 @@ with btn_col1:
             st.session_state.last_message = msg
             st.session_state.last_message_type = "success" if ok else "error"
             st.rerun()
-
-with btn_col2:
-    if recorder.is_recording:
-        if st.button("⏹️ Stop Recording", type="secondary", use_container_width=True):
+    else:
+        if st.button("⏹  Stop Recording", type="primary", use_container_width=True):
             ok, msg = recorder.stop()
             st.session_state.recording = False
             st.session_state.last_message = msg
             st.session_state.last_message_type = "success" if ok else "error"
             st.rerun()
 
-# Auto-refresh while recording to update the timer
+# Auto-refresh timer
 if recorder.is_recording:
     time.sleep(1)
     st.rerun()
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  DEVICE SELECTOR (expandable)
+# ══════════════════════════════════════════════════════════════════════════════
 
-# ── Recordings List ──────────────────────────────────────────────────────────
-st.markdown("---")
-st.markdown("### 📁 Recordings")
+st.markdown("")
+with st.expander("🎛️  Device Selection & Advanced Settings", expanded=False):
+    dc1, dc2, dc3 = st.columns(3)
+
+    vdevs = st.session_state.video_devices
+    adevs = st.session_state.audio_devices
+
+    with dc1:
+        if vdevs:
+            opts = {d.index: d.name for d in vdevs}
+            cur = st.session_state.sel_screen if st.session_state.sel_screen in opts else list(opts.keys())[0]
+            st.session_state.sel_screen = st.selectbox(
+                "Screen Device", list(opts.keys()),
+                format_func=lambda x: opts[x],
+                index=list(opts.keys()).index(cur),
+            )
+
+    with dc2:
+        if adevs:
+            opts = {d.index: d.name for d in adevs}
+            cur = st.session_state.sel_blackhole if st.session_state.sel_blackhole in opts else list(opts.keys())[0]
+            st.session_state.sel_blackhole = st.selectbox(
+                "System Audio Device (BlackHole)", list(opts.keys()),
+                format_func=lambda x: opts[x],
+                index=list(opts.keys()).index(cur),
+            )
+
+    with dc3:
+        if adevs:
+            opts = {d.index: d.name for d in adevs}
+            cur = st.session_state.sel_mic if st.session_state.sel_mic in opts else list(opts.keys())[0]
+            st.session_state.sel_mic = st.selectbox(
+                "Microphone Device", list(opts.keys()),
+                format_func=lambda x: opts[x],
+                index=list(opts.keys()).index(cur),
+            )
+
+    if st.button("🔄 Refresh Devices"):
+        refresh_devices()
+        st.rerun()
+
+    st.markdown("**Advanced**")
+    ac1, ac2, ac3, ac4 = st.columns(4)
+    with ac1:
+        st.select_slider("Frame Rate", [15, 24, 30, 60], 30, key="adv_fps")
+    with ac2:
+        st.select_slider("Video Bitrate", ["4000k", "6000k", "8000k", "12000k"], "8000k", key="adv_vbr")
+    with ac3:
+        st.select_slider("Sys Audio Bitrate", ["96k", "128k", "192k", "256k"], "192k", key="adv_abr_sys")
+    with ac4:
+        st.select_slider("Mic Bitrate", ["64k", "96k", "128k", "192k"], "128k", key="adv_abr_mic")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  RECORDINGS
+# ══════════════════════════════════════════════════════════════════════════════
+
+st.markdown('<div class="section-head"><h3>📁 Recordings</h3></div>', unsafe_allow_html=True)
 
 recordings = sorted(
     glob.glob(os.path.join(RECORDINGS_DIR, "*.mp4")),
-    key=os.path.getmtime,
-    reverse=True,
+    key=os.path.getmtime, reverse=True,
 )
 
 if not recordings:
-    st.info("No recordings yet. Hit **Start Recording** to begin!")
+    st.markdown("""
+    <div style="text-align:center; padding:3rem 0; color:#aaa;">
+        <div style="font-size:3rem; margin-bottom:0.5rem;">🎬</div>
+        <div>No recordings yet. Hit <b>Start Recording</b> above!</div>
+    </div>
+    """, unsafe_allow_html=True)
 else:
-    for filepath in recordings:
-        fname = os.path.basename(filepath)
-        fsize = os.path.getsize(filepath)
-        fdate = datetime.fromtimestamp(os.path.getmtime(filepath))
-        tracks = get_track_count(filepath)
+    for fp in recordings:
+        fname = os.path.basename(fp)
+        fsize = os.path.getsize(fp)
+        fdate = datetime.fromtimestamp(os.path.getmtime(fp))
+        tracks = get_track_count(fp)
         is_merged = "_merged" in fname
+        icon = "🔗" if is_merged else "🎞️"
 
         with st.container():
-            rc1, rc2, rc3, rc4 = st.columns([3, 1, 1, 1.5])
+            c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
 
-            with rc1:
-                icon = "🎞️" if not is_merged else "🔗"
+            with c1:
                 st.markdown(f"**{icon} {fname}**")
-                st.caption(f"{fdate.strftime('%b %d, %Y %I:%M %p')}  ·  {fmt_size(fsize)}  ·  {tracks} audio track(s)")
+                st.caption(
+                    f"{fdate.strftime('%b %d, %Y %I:%M %p')}  ·  "
+                    f"{fmt_size(fsize)}  ·  {tracks} audio track{'s' if tracks != 1 else ''}"
+                )
 
-            with rc2:
-                # Download button
-                with open(filepath, "rb") as f:
+            with c2:
+                with open(fp, "rb") as f:
                     st.download_button(
-                        "⬇️ Download",
-                        data=f,
-                        file_name=fname,
-                        mime="video/mp4",
-                        key=f"dl_{fname}",
-                        use_container_width=True,
+                        "⬇️ Download", f, fname, "video/mp4",
+                        key=f"dl_{fname}", use_container_width=True,
                     )
 
-            with rc3:
+            with c3:
                 if tracks >= 2 and not is_merged:
-                    if st.button("🔗 Merge", key=f"merge_{fname}", use_container_width=True):
-                        st.session_state.merge_file = filepath
+                    if st.button("🔗 Merge", key=f"mg_{fname}", use_container_width=True):
+                        st.session_state.merge_file = fp
                         st.rerun()
 
-            with rc4:
-                # Open in Finder
-                if st.button("📂 Reveal", key=f"reveal_{fname}", use_container_width=True):
-                    os.system(f'open -R "{filepath}"')
+            with c4:
+                if st.button("📂 Reveal", key=f"rv_{fname}", use_container_width=True):
+                    os.system(f'open -R "{fp}"')
 
 
 # ── Merge Dialog ─────────────────────────────────────────────────────────────
+
 if st.session_state.merge_file and os.path.exists(st.session_state.merge_file):
     st.markdown("---")
-    st.markdown("### 🔗 Merge Audio Tracks")
-    st.caption(f"File: `{os.path.basename(st.session_state.merge_file)}`")
+    st.markdown(f"### 🔗 Merge Audio Tracks")
+    st.caption(f"`{os.path.basename(st.session_state.merge_file)}`")
 
-    mcol1, mcol2 = st.columns(2)
-    with mcol1:
-        sys_vol = st.slider("System Audio Volume", 0.0, 1.0, 0.5, 0.05, key="merge_sys_vol")
-    with mcol2:
-        mic_vol = st.slider("Microphone Volume", 0.0, 1.0, 0.5, 0.05, key="merge_mic_vol")
+    mc1, mc2 = st.columns(2)
+    with mc1:
+        sys_vol = st.slider("System Audio Volume", 0.0, 1.0, 0.5, 0.05, key="mg_sys")
+    with mc2:
+        mic_vol = st.slider("Microphone Volume", 0.0, 1.0, 0.5, 0.05, key="mg_mic")
 
-    preset_col1, preset_col2, preset_col3 = st.columns(3)
-    with preset_col1:
-        if st.button("Equal Mix (50/50)", use_container_width=True):
-            st.session_state.merge_sys_vol = 0.5
-            st.session_state.merge_mic_vol = 0.5
+    p1, p2, p3 = st.columns(3)
+    with p1:
+        if st.button("Equal (50/50)", use_container_width=True):
+            st.session_state.mg_sys = 0.5
+            st.session_state.mg_mic = 0.5
             st.rerun()
-    with preset_col2:
+    with p2:
         if st.button("System Louder (70/30)", use_container_width=True):
-            st.session_state.merge_sys_vol = 0.7
-            st.session_state.merge_mic_vol = 0.3
+            st.session_state.mg_sys = 0.7
+            st.session_state.mg_mic = 0.3
             st.rerun()
-    with preset_col3:
+    with p3:
         if st.button("Mic Louder (30/70)", use_container_width=True):
-            st.session_state.merge_sys_vol = 0.3
-            st.session_state.merge_mic_vol = 0.7
+            st.session_state.mg_sys = 0.3
+            st.session_state.mg_mic = 0.7
             st.rerun()
 
-    merge_btn_col, cancel_col, _ = st.columns([1, 1, 2])
-    with merge_btn_col:
+    b1, b2, _ = st.columns([1, 1, 2])
+    with b1:
         if st.button("✅ Merge Now", type="primary", use_container_width=True):
-            with st.spinner("Merging audio tracks..."):
-                ok, result = merge_tracks(
-                    st.session_state.merge_file,
-                    system_vol=sys_vol,
-                    mic_vol=mic_vol,
-                )
-            if ok:
-                st.session_state.last_message = f"Merged: {os.path.basename(result)}"
-                st.session_state.last_message_type = "success"
-            else:
-                st.session_state.last_message = f"Merge failed: {result}"
-                st.session_state.last_message_type = "error"
+            with st.spinner("Merging..."):
+                ok, result = merge_tracks(st.session_state.merge_file, sys_vol, mic_vol)
+            st.session_state.last_message = f"Merged: {os.path.basename(result)}" if ok else f"Failed: {result}"
+            st.session_state.last_message_type = "success" if ok else "error"
             st.session_state.merge_file = None
             st.rerun()
-
-    with cancel_col:
+    with b2:
         if st.button("Cancel", use_container_width=True):
             st.session_state.merge_file = None
             st.rerun()
+
+
+# ── Footer ───────────────────────────────────────────────────────────────────
+st.markdown("---")
+st.caption(
+    "<center>Record Screen + Audio — OpenTF · "
+    "Audio settings are automatically saved before recording and restored after · "
+    f"Recordings: <code>{RECORDINGS_DIR}</code></center>",
+    unsafe_allow_html=True,
+)
