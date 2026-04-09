@@ -364,7 +364,7 @@ if not has_mo:
 #  RECORDING BANNER with JS timer (no Python rerun needed)
 # ══════════════════════════════════════════════════════════════════════════════
 
-if is_rec:
+if is_rec and not st.session_state.get("stopping", False):
     start_ts = recorder.elapsed_seconds
     # Use components.html so JavaScript actually runs (st.markdown strips <script>)
     components.html(f"""
@@ -551,15 +551,33 @@ with btn_center:
             st.session_state.last_message_type = "success" if ok else "error"
             st.rerun()
     else:
-        if st.button("⏹  Stop Recording", type="primary", use_container_width=True):
+        # Two-phase stop: first click sets "stopping" state and reruns,
+        # second render shows "Saving..." and actually stops.
+        if st.session_state.get("stopping", False):
+            # Phase 2: Show "Saving..." button (disabled) and do the work
+            st.button("⏳  Saving...", type="primary", use_container_width=True, disabled=True)
+            # Also stop the JS timer by replacing the banner
+            components.html("""
+            <div style="
+                background: linear-gradient(135deg, #f57c00 0%, #e65100 100%);
+                color: white; padding: 1.25rem 2rem; border-radius: 16px;
+                display: flex; align-items: center; justify-content: center;
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                font-size: 1.1rem; font-weight: 700; letter-spacing: 0.05em;">
+                ⏳ &nbsp; Stopping & saving recording...
+            </div>
+            """, height=70)
             ok, msg = recorder.stop()
             st.session_state.recording = False
+            st.session_state.stopping = False
             st.session_state.last_message = msg
             st.session_state.last_message_type = "success" if ok else "error"
             st.rerun()
-
-# NO auto-refresh loop here — the JS timer handles the display.
-# The page only reruns when the user clicks something.
+        else:
+            # Phase 1: User clicks Stop → set flag and rerun to show "Saving..."
+            if st.button("⏹  Stop Recording", type="primary", use_container_width=True):
+                st.session_state.stopping = True
+                st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  DEVICE SELECTOR (expandable)
