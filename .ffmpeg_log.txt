@@ -1,0 +1,4 @@
+objc[9728]: class `NSKVONotifying_AVCaptureScreenInput' not linked into application
+objc[9728]: class `NSKVONotifying_AVCaptureScreenInput' not linked into application
+objc[9728]: class `NSKVONotifying_AVCaptureScreenInput' not linked into application
+[AVFoundation indev @ 0xc01020140] Configuration of video device failed, falling back to default.

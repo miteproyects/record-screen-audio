@@ -155,13 +155,13 @@ class Recorder:
             # Log stderr to file for debugging
             log_fh = open(LOG_FILE, "w")
 
-            # Start ffmpeg as a detached process so it survives Streamlit reruns
+            # Start ffmpeg — must stay in Terminal's session to inherit
+            # macOS screen recording permission (start_new_session=True breaks it)
             process = subprocess.Popen(
                 cmd,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
                 stderr=log_fh,
-                start_new_session=True,  # detach from parent
             )
 
             # Brief pause to check if ffmpeg crashed immediately
