@@ -83,8 +83,29 @@ class AudioManager:
         return None
 
     def find_default_mic(self, audio_devices: list[AudioDevice]) -> Optional[AudioDevice]:
-        """Find first non-BlackHole, non-Multi-Output audio device (likely the mic)."""
+        """Find the Mac's built-in mic, preferring MacBook over iPhone devices."""
         skip = {"blackhole", "multi-output"}
+        # Prefer built-in Mac mic keywords
+        prefer = ["macbook", "built-in", "internal"]
+
+        # First pass: look for MacBook/built-in mic
+        for dev in audio_devices:
+            name_lower = dev.name.lower()
+            if any(s in name_lower for s in skip):
+                continue
+            if any(p in name_lower for p in prefer):
+                return dev
+
+        # Second pass: any non-BlackHole, non-Multi-Output, non-iPhone device
+        for dev in audio_devices:
+            name_lower = dev.name.lower()
+            if any(s in name_lower for s in skip):
+                continue
+            if "iphone" in name_lower:
+                continue
+            return dev
+
+        # Last resort: any non-BlackHole device
         for dev in audio_devices:
             if not any(s in dev.name.lower() for s in skip):
                 return dev
