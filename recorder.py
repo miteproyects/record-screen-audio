@@ -1,10 +1,12 @@
 """
 recorder.py — Hybrid screen + audio recorder for macOS.
 
-Uses macOS native `screencapture -v` for reliable screen capture
-(avfoundation's AVCaptureScreenInput is deprecated and produces black
-frames on recent macOS), and ffmpeg for audio recording (BlackHole +
-microphone). On stop, merges video + audio into a single MP4.
+Architecture:
+  - Screen + system audio: macOS native `screencapture -v` (reliable, captures
+    both video and system audio from the current output device)
+  - Microphone: separate `ffmpeg` process recording from a single avfoundation
+    audio input (avoids dual-input conflicts)
+  - On stop: merges screen recording + mic track into a single MP4
 
 PID state is persisted to disk so recording survives Streamlit reruns.
 """
@@ -43,25 +45,9 @@ class RecordingConfig:
 
 # ── State persistence ────────────────────────────────────────────────────────
 
-def _save_state(
-    output_file: str,
-    start_time: float,
-    has_two_audio: bool,
-    screen_pid: int = 0,
-    audio_pid: int = 0,
-    screen_tmp: str = "",
-    audio_tmp: str = "",
-):
+def _save_state(**kwargs):
     with open(STATE_FILE, "w") as f:
-        json.dump({
-            "screen_pid": screen_pid,
-            "audio_pid": audio_pid,
-            "output_file": output_file,
-            "screen_tmp": screen_tmp,
-            "audio_tmp": audio_tmp,
-            "start_time": start_time,
-            "has_two_audio": has_two_audio,
-        }, f)
+        json.dump(kwargs, f)
 
 
 def _load_state() -> Optional[dict]:
@@ -92,7 +78,6 @@ def _pid_alive(pid: int) -> bool:
 
 
 def _kill_gracefully(pid: int, timeout: float = 10):
-    """Send SIGINT, wait, then SIGKILL if needed."""
     if not _pid_alive(pid):
         return
     try:
@@ -124,11 +109,12 @@ class Recorder:
         state = _load_state()
         if not state:
             return False
-        s_alive = _pid_alive(state.get("screen_pid", 0))
-        a_alive = _pid_alive(state.get("audio_pid", 0))
-        if s_alive or a_alive:
+        alive = any(
+            _pid_alive(state.get(k, 0))
+            for k in ["screen_pid", "mic_pid"]
+        )
+        if alive:
             return True
-        # Both dead — clean up
         _clear_state()
         self._am.restore_settings()
         return False
@@ -156,7 +142,7 @@ class Recorder:
     @property
     def has_separate_tracks(self) -> bool:
         state = _load_state()
-        return state.get("has_two_audio", False) if state else False
+        return state.get("has_mic_track", False) if state else False
 
     # ── Start ────────────────────────────────────────────────────────────
 
@@ -170,7 +156,8 @@ class Recorder:
         # Save audio settings before changing anything
         self._am.save_settings()
 
-        # Activate Multi-Output Device if recording system audio
+        # Activate Multi-Output Device so screencapture gets system audio
+        # AND the user can still hear it through speakers
         if config.record_system_audio and self._am.has_multi_output():
             self._am.activate_multi_output()
 
@@ -180,16 +167,16 @@ class Recorder:
         )
 
         screen_pid = 0
-        audio_pid = 0
+        mic_pid = 0
         screen_tmp = ""
-        audio_tmp = ""
-        has_two_audio = False
+        mic_tmp = ""
 
-        bh_idx = config.blackhole_device.index if config.blackhole_device else 0
         mic_idx = config.mic_device.index if config.mic_device else 2
 
-        # ── Screen capture (macOS native screencapture) ──────────────
-        if config.record_screen:
+        # ── 1. Screen + System Audio (macOS native screencapture) ────
+        #    screencapture -v captures both video AND audio from the
+        #    current system output device (Multi-Output = speakers + BlackHole)
+        if config.record_screen or config.record_system_audio:
             screen_tmp = os.path.join(
                 self._recordings_dir, f".tmp_screen_{timestamp}.mov"
             )
@@ -205,80 +192,59 @@ class Recorder:
                 self._am.restore_settings()
                 return False, f"Failed to start screen capture: {e}"
 
-        # ── Audio capture (ffmpeg avfoundation) ──────────────────────
-        has_audio = config.record_system_audio or config.record_mic
-        if has_audio:
-            audio_tmp = os.path.join(
-                self._recordings_dir, f".tmp_audio_{timestamp}.m4a"
+        # ── 2. Microphone (single ffmpeg avfoundation input) ─────────
+        #    Separate process, single audio input — no dual-input conflicts
+        if config.record_mic:
+            mic_tmp = os.path.join(
+                self._recordings_dir, f".tmp_mic_{timestamp}.m4a"
             )
-            audio_cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "warning"]
-
-            if config.record_system_audio and config.record_mic:
-                has_two_audio = True
-                audio_cmd += [
-                    "-f", "avfoundation", "-i", f":{bh_idx}",
-                    "-f", "avfoundation", "-i", f":{mic_idx}",
-                    "-map", "0:a", "-map", "1:a",
-                    "-c:a:0", "aac", "-b:a:0", config.audio_bitrate_system,
-                    "-c:a:1", "aac", "-b:a:1", config.audio_bitrate_mic,
-                    "-metadata:s:a:0", "title=System Audio (BlackHole)",
-                    "-metadata:s:a:1", "title=Microphone",
-                ]
-            elif config.record_system_audio:
-                audio_cmd += [
-                    "-f", "avfoundation", "-i", f":{bh_idx}",
-                    "-c:a", "aac", "-b:a", config.audio_bitrate_system,
-                    "-metadata:s:a:0", "title=System Audio (BlackHole)",
-                ]
-            elif config.record_mic:
-                audio_cmd += [
-                    "-f", "avfoundation", "-i", f":{mic_idx}",
-                    "-c:a", "aac", "-b:a", config.audio_bitrate_mic,
-                    "-metadata:s:a:0", "title=Microphone",
-                ]
-
-            audio_cmd.append(audio_tmp)
+            mic_cmd = [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "warning",
+                "-f", "avfoundation",
+                "-i", f":{mic_idx}",
+                "-c:a", "aac", "-b:a", config.audio_bitrate_mic,
+                mic_tmp,
+            ]
 
             try:
                 log_fh = open(LOG_FILE, "w")
-                audio_proc = subprocess.Popen(
-                    audio_cmd,
+                mic_proc = subprocess.Popen(
+                    mic_cmd,
                     stdin=subprocess.PIPE,
                     stdout=subprocess.DEVNULL,
                     stderr=log_fh,
                 )
-                audio_pid = audio_proc.pid
+                mic_pid = mic_proc.pid
             except Exception as e:
-                # Kill screen capture if audio fails
                 if screen_pid:
                     _kill_gracefully(screen_pid)
                 self._am.restore_settings()
-                return False, f"Failed to start audio capture: {e}"
+                return False, f"Failed to start mic capture: {e}"
 
         # Brief check that processes are alive
         time.sleep(1.0)
         if screen_pid and not _pid_alive(screen_pid):
-            if audio_pid:
-                _kill_gracefully(audio_pid)
+            if mic_pid:
+                _kill_gracefully(mic_pid)
             self._am.restore_settings()
             return False, "Screen capture exited immediately. Check screen recording permissions."
 
-        if audio_pid and not _pid_alive(audio_pid):
+        if mic_pid and not _pid_alive(mic_pid):
             if screen_pid:
                 _kill_gracefully(screen_pid)
             self._am.restore_settings()
             err = self.last_error
-            return False, f"Audio capture failed: {err}" if err else "Audio capture exited immediately."
+            return False, f"Mic capture failed: {err}" if err else "Mic capture exited immediately."
 
         # Save state
         _save_state(
             output_file=output_file,
             start_time=time.time(),
-            has_two_audio=has_two_audio,
+            has_mic_track=(mic_pid > 0),
             screen_pid=screen_pid,
-            audio_pid=audio_pid,
+            mic_pid=mic_pid,
             screen_tmp=screen_tmp,
-            audio_tmp=audio_tmp,
+            mic_tmp=mic_tmp,
         )
 
         sources = []
@@ -289,7 +255,7 @@ class Recorder:
         if config.record_mic:
             sources.append("mic")
 
-        return True, f"Recording {' + '.join(sources)} → {os.path.basename(output_file)}"
+        return True, f"Recording {' + '.join(sources)}"
 
     # ── Stop ─────────────────────────────────────────────────────────
 
@@ -299,45 +265,42 @@ class Recorder:
             return False, "No recording in progress."
 
         screen_pid = state.get("screen_pid", 0)
-        audio_pid = state.get("audio_pid", 0)
+        mic_pid = state.get("mic_pid", 0)
         output_file = state["output_file"]
         screen_tmp = state.get("screen_tmp", "")
-        audio_tmp = state.get("audio_tmp", "")
-        has_two_audio = state.get("has_two_audio", False)
+        mic_tmp = state.get("mic_tmp", "")
+        has_mic = state.get("has_mic_track", False)
 
-        # Stop both processes
+        # Stop both processes gracefully
+        if mic_pid:
+            _kill_gracefully(mic_pid, timeout=10)
         if screen_pid:
-            # screencapture stops on SIGINT and finalizes the file
             _kill_gracefully(screen_pid, timeout=10)
 
-        if audio_pid:
-            _kill_gracefully(audio_pid, timeout=10)
+        # Wait a bit for files to finalize
+        time.sleep(1)
 
         _clear_state()
-
-        # Restore audio settings
         self._am.restore_settings()
 
-        # ── Merge screen + audio into final MP4 ─────────────────────
-        has_screen = screen_tmp and os.path.exists(screen_tmp) and os.path.getsize(screen_tmp) > 0
-        has_audio = audio_tmp and os.path.exists(audio_tmp) and os.path.getsize(audio_tmp) > 0
+        # ── Merge ────────────────────────────────────────────────────
+        has_screen = screen_tmp and os.path.exists(screen_tmp) and os.path.getsize(screen_tmp) > 1000
+        has_mic_file = mic_tmp and os.path.exists(mic_tmp) and os.path.getsize(mic_tmp) > 100
 
-        if has_screen and has_audio:
-            # Merge video + audio
+        if has_screen and has_mic_file:
+            # Merge: screen.mov (video + system audio) + mic.m4a (mic)
+            # Result: video + 2 audio tracks (system audio, mic)
             merge_cmd = [
                 "ffmpeg", "-y", "-hide_banner", "-loglevel", "warning",
-                "-i", screen_tmp,
-                "-i", audio_tmp,
-                "-map", "0:v",
-            ]
-            if has_two_audio:
-                merge_cmd += ["-map", "1:a:0", "-map", "1:a:1"]
-            else:
-                merge_cmd += ["-map", "1:a"]
-
-            merge_cmd += [
+                "-i", screen_tmp,    # input 0: video + system audio
+                "-i", mic_tmp,       # input 1: mic audio
+                "-map", "0:v",       # video from screen
+                "-map", "0:a",       # system audio from screen
+                "-map", "1:a",       # mic from ffmpeg
                 "-c:v", "copy",
-                "-c:a", "copy",
+                "-c:a", "aac", "-b:a", "192k",
+                "-metadata:s:a:0", "title=System Audio",
+                "-metadata:s:a:1", "title=Microphone",
                 "-shortest",
                 output_file,
             ]
@@ -347,16 +310,15 @@ class Recorder:
                     merge_cmd, capture_output=True, text=True, timeout=120
                 )
                 if result.returncode != 0:
-                    # Merge failed — log error, keep tmp files
-                    with open(LOG_FILE, "a") as f:
-                        f.write(f"\nMerge error:\n{result.stderr}")
-                    # Fall back: just use the screen recording
+                    with open(LOG_FILE, "w") as f:
+                        f.write(f"Merge error:\n{result.stderr}")
+                    # Fallback: just use screen recording (has video + system audio)
                     os.rename(screen_tmp, output_file)
-            except Exception as e:
+            except Exception:
                 os.rename(screen_tmp, output_file)
 
-            # Clean up tmp files
-            for tmp in [screen_tmp, audio_tmp]:
+            # Clean up temp files
+            for tmp in [screen_tmp, mic_tmp]:
                 try:
                     if os.path.exists(tmp):
                         os.remove(tmp)
@@ -364,16 +326,16 @@ class Recorder:
                     pass
 
         elif has_screen:
-            # Screen only — rename tmp to output
+            # Screen only (video + system audio, no mic)
             os.rename(screen_tmp, output_file)
 
-        elif has_audio:
-            # Audio only — rename tmp to output
+        elif has_mic_file:
+            # Mic only
             output_file = output_file.replace(".mp4", "_audio.m4a")
-            os.rename(audio_tmp, output_file)
+            os.rename(mic_tmp, output_file)
 
         else:
-            return False, "No recording files found — both screen and audio may have failed."
+            return False, "No recording files found — capture may have failed."
 
         if os.path.exists(output_file):
             size_mb = os.path.getsize(output_file) / (1024 * 1024)
@@ -382,7 +344,7 @@ class Recorder:
             return False, "Recording file not found after merge."
 
 
-# ── Merge utility ────────────────────────────────────────────────────────────
+# ── Merge utility (user-facing, for post-recording) ─────────────────────────
 
 def merge_tracks(
     input_file: str,
