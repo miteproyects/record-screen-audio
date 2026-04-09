@@ -4,6 +4,7 @@ Streamlit UI for recording macOS screen, system audio, and microphone.
 """
 
 import streamlit as st
+import streamlit.components.v1 as components
 import os
 import time
 import glob
@@ -377,8 +378,51 @@ if not has_mo:
 
 if is_rec:
     start_ts = recorder.elapsed_seconds
-    # JavaScript-based live timer — updates every second without Streamlit rerun
-    st.markdown(f"""
+    # Use components.html so JavaScript actually runs (st.markdown strips <script>)
+    components.html(f"""
+    <style>
+        @keyframes pulse-glow {{
+            0%, 100% {{ box-shadow: 0 0 20px rgba(244, 67, 54, 0.3); }}
+            50% {{ box-shadow: 0 0 40px rgba(244, 67, 54, 0.6); }}
+        }}
+        @keyframes pulse-dot {{
+            0%, 100% {{ opacity: 1; transform: scale(1); }}
+            50% {{ opacity: 0.5; transform: scale(0.8); }}
+        }}
+        .rec-banner {{
+            background: linear-gradient(135deg, #d32f2f 0%, #b71c1c 100%);
+            color: white;
+            padding: 1.25rem 2rem;
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            animation: pulse-glow 2s ease-in-out infinite;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        }}
+        .rec-left {{
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }}
+        .rec-dot {{
+            width: 16px; height: 16px;
+            background: #fff;
+            border-radius: 50%;
+            animation: pulse-dot 1s ease-in-out infinite;
+        }}
+        .rec-label {{
+            font-size: 1.1rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+        }}
+        .rec-timer {{
+            font-family: 'SF Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: 2rem;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+        }}
+    </style>
     <div class="rec-banner">
         <div class="rec-left">
             <div class="rec-dot"></div>
@@ -388,24 +432,23 @@ if is_rec:
     </div>
     <script>
         (function() {{
-            var startSeconds = {start_ts};
-            var timerEl = document.getElementById('rec-timer');
-            if (!timerEl) return;
-            function update() {{
-                startSeconds += 1;
-                var h = Math.floor(startSeconds / 3600);
-                var m = Math.floor((startSeconds % 3600) / 60);
-                var s = Math.floor(startSeconds % 60);
-                var pad = function(n) {{ return n < 10 ? '0' + n : '' + n; }};
-                timerEl.textContent = h > 0
+            var seconds = {int(start_ts)};
+            var el = document.getElementById('rec-timer');
+            function pad(n) {{ return n < 10 ? '0' + n : '' + n; }}
+            function tick() {{
+                var h = Math.floor(seconds / 3600);
+                var m = Math.floor((seconds % 3600) / 60);
+                var s = seconds % 60;
+                el.textContent = h > 0
                     ? pad(h) + ':' + pad(m) + ':' + pad(s)
                     : pad(m) + ':' + pad(s);
+                seconds++;
             }}
-            update();
-            setInterval(update, 1000);
+            tick();
+            setInterval(tick, 1000);
         }})();
     </script>
-    """, unsafe_allow_html=True)
+    """, height=80)
 
 # ── Status message ───────────────────────────────────────────────────────────
 if st.session_state.last_message:
