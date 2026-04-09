@@ -457,6 +457,15 @@ def card_label(icon, title, desc, device, is_on):
     dev_html = f"\n\n`{device}`" if is_on else ""
     return f"{icon}\n\n**{title}**\n\n{desc}{dev_html}\n\n{check}"
 
+is_rec = recorder.is_recording
+
+# If recording, sync card state with actual running processes
+if is_rec:
+    live = recorder.active_sources
+    st.session_state.opt_screen = live["screen"]
+    st.session_state.opt_system_audio = live["sysaudio"]
+    st.session_state.opt_mic = live["mic"]
+
 with col1:
     cls = "active" if st.session_state.opt_screen else "inactive"
     st.markdown(f'<div class="source-card-btn {cls}">', unsafe_allow_html=True)
@@ -464,7 +473,13 @@ with col1:
         card_label("🖥️", "Screen", "Full display capture with cursor", scr_name, st.session_state.opt_screen),
         key="btn_screen", use_container_width=True,
     ):
-        st.session_state.opt_screen = not st.session_state.opt_screen
+        new_val = not st.session_state.opt_screen
+        if is_rec:
+            ok, msg = recorder.toggle_screen(new_val)
+            if ok:
+                st.session_state.opt_screen = new_val
+        else:
+            st.session_state.opt_screen = new_val
         st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -475,7 +490,13 @@ with col2:
         card_label("🔊", "System Audio", "Teams · Zoom · YouTube via BlackHole", bh_name, st.session_state.opt_system_audio),
         key="btn_sysaudio", use_container_width=True,
     ):
-        st.session_state.opt_system_audio = not st.session_state.opt_system_audio
+        new_val = not st.session_state.opt_system_audio
+        if is_rec:
+            ok, msg = recorder.toggle_sysaudio(new_val)
+            if ok:
+                st.session_state.opt_system_audio = new_val
+        else:
+            st.session_state.opt_system_audio = new_val
         st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -486,7 +507,13 @@ with col3:
         card_label("🎙️", "Microphone", "Your voice and room audio", mic_name, st.session_state.opt_mic),
         key="btn_mic", use_container_width=True,
     ):
-        st.session_state.opt_mic = not st.session_state.opt_mic
+        new_val = not st.session_state.opt_mic
+        if is_rec:
+            ok, msg = recorder.toggle_mic(new_val)
+            if ok:
+                st.session_state.opt_mic = new_val
+        else:
+            st.session_state.opt_mic = new_val
         st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
