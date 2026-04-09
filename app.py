@@ -51,32 +51,47 @@ st.markdown("""
     }
 
     /* ── Source Cards (clickable buttons) ──────────────────── */
+    @keyframes card-glow {
+        0%, 100% { box-shadow: 0 0 15px rgba(67, 97, 238, 0.25), 0 4px 15px rgba(67, 97, 238, 0.1); }
+        50% { box-shadow: 0 0 25px rgba(67, 97, 238, 0.4), 0 4px 20px rgba(67, 97, 238, 0.2); }
+    }
     .source-card-btn > button {
         background: #ffffff !important;
         border: 2px solid #e8e8e8 !important;
         border-radius: 16px !important;
         padding: 1.5rem 1rem !important;
         text-align: center !important;
-        transition: all 0.25s ease !important;
+        transition: all 0.3s ease !important;
         min-height: 170px !important;
         width: 100% !important;
         cursor: pointer !important;
         color: #1a1a2e !important;
     }
     .source-card-btn > button:hover {
-        border-color: #4361ee !important;
-        box-shadow: 0 4px 20px rgba(67, 97, 238, 0.15) !important;
         transform: translateY(-2px) !important;
     }
+    /* Active = glowing blue border + soft blue background */
     .source-card-btn.active > button {
         border-color: #4361ee !important;
         background: linear-gradient(135deg, #f0f4ff 0%, #e8edff 100%) !important;
-        box-shadow: 0 4px 20px rgba(67, 97, 238, 0.15) !important;
+        animation: card-glow 2.5s ease-in-out infinite !important;
     }
+    .source-card-btn.active > button:hover {
+        animation: none !important;
+        box-shadow: 0 0 30px rgba(67, 97, 238, 0.5), 0 6px 25px rgba(67, 97, 238, 0.25) !important;
+    }
+    /* Inactive = dimmed, inset shadow, greyed out */
     .source-card-btn.inactive > button {
-        opacity: 0.5 !important;
-        border-color: #ddd !important;
-        background: #fafafa !important;
+        opacity: 0.55 !important;
+        border-color: #d0d0d0 !important;
+        background: #f5f5f5 !important;
+        box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.08) !important;
+        filter: grayscale(40%) !important;
+    }
+    .source-card-btn.inactive > button:hover {
+        opacity: 0.75 !important;
+        border-color: #bbb !important;
+        box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.08), 0 2px 10px rgba(0,0,0,0.08) !important;
     }
 
     /* ── Big Record Button ─────────────────────────────────── */
@@ -126,33 +141,6 @@ st.markdown("""
         font-size: 2rem;
         font-weight: 800;
         letter-spacing: 0.08em;
-    }
-
-    /* ── Summary Row ───────────────────────────────────────── */
-    .summary-row {
-        display: flex;
-        justify-content: center;
-        gap: 2rem;
-        margin: 0.75rem 0 0.5rem 0;
-        flex-wrap: wrap;
-    }
-    .summary-chip {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        background: #f0f4ff;
-        border: 1px solid #d0d9ff;
-        border-radius: 20px;
-        padding: 6px 16px;
-        font-size: 0.82rem;
-        font-weight: 600;
-        color: #4361ee;
-    }
-    .summary-chip.off {
-        background: #f5f5f5;
-        border-color: #e0e0e0;
-        color: #aaa;
-        text-decoration: line-through;
     }
 
     /* ── Status Pills ──────────────────────────────────────── */
@@ -474,9 +462,8 @@ col1, col2, col3 = st.columns(3, gap="medium")
 
 
 def card_label(icon, title, desc, device, is_on):
-    check = "✅ ON" if is_on else "⬜ OFF"
     dev_html = f"\n\n`{device}`" if is_on else ""
-    return f"{icon}\n\n**{title}**\n\n{desc}{dev_html}\n\n{check}"
+    return f"{icon}\n\n**{title}**\n\n{desc}{dev_html}"
 
 
 def handle_toggle(source_key, toggle_fn):
@@ -526,31 +513,8 @@ with col3:
         handle_toggle("opt_mic", recorder.toggle_mic)
     st.markdown('</div>', unsafe_allow_html=True)
 
-# ── Summary chips ────────────────────────────────────────────────────────────
-active_sources = []
-if st.session_state.opt_screen:
-    active_sources.append("🖥️ Screen")
-if st.session_state.opt_system_audio:
-    active_sources.append("🔊 System Audio")
-if st.session_state.opt_mic:
-    active_sources.append("🎙️ Microphone")
-
-n = len(active_sources)
-if n == 3:
-    summary_text = "Recording everything — screen, system audio, and microphone simultaneously"
-elif n == 0:
-    summary_text = "Select at least one source to record"
-else:
-    summary_text = f"Recording: {' + '.join(active_sources)}"
-
-chips = ""
-for src in ["🖥️ Screen", "🔊 System Audio", "🎙️ Microphone"]:
-    on = src in active_sources
-    cls = "" if on else "off"
-    chips += f'<span class="summary-chip {cls}">{src}</span>'
-
-st.markdown(f'<div class="summary-row">{chips}</div>', unsafe_allow_html=True)
-st.caption(f"<center>{summary_text}</center>", unsafe_allow_html=True)
+# Count active sources for the record button
+n = sum([st.session_state.opt_screen, st.session_state.opt_system_audio, st.session_state.opt_mic])
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  BIG RECORD / STOP BUTTON
