@@ -77,35 +77,6 @@ st.markdown("""
         border-color: #ddd !important;
         background: #fafafa !important;
     }
-    .source-icon {
-        font-size: 2.5rem;
-        margin-bottom: 0.5rem;
-    }
-    .source-title {
-        font-size: 1rem;
-        font-weight: 700;
-        color: #1a1a2e;
-        margin-bottom: 0.25rem;
-    }
-    .source-desc {
-        font-size: 0.78rem;
-        color: #777;
-        line-height: 1.3;
-    }
-    .source-device {
-        margin-top: 0.5rem;
-        font-size: 0.72rem;
-        color: #4361ee;
-        font-weight: 600;
-        background: rgba(67, 97, 238, 0.08);
-        padding: 2px 10px;
-        border-radius: 20px;
-        display: inline-block;
-    }
-    .source-check {
-        margin-top: 0.4rem;
-        font-size: 1.2rem;
-    }
 
     /* ── Big Record Button ─────────────────────────────────── */
     .big-btn-wrap {
@@ -207,19 +178,6 @@ st.markdown("""
     .dep-err {
         background: #ffebee;
         color: #c62828;
-    }
-
-    /* ── File Cards ─────────────────────────────────────────── */
-    .file-card {
-        background: #fff;
-        border: 1px solid #eee;
-        border-radius: 12px;
-        padding: 1rem 1.25rem;
-        margin-bottom: 0.5rem;
-        transition: border-color 0.2s;
-    }
-    .file-card:hover {
-        border-color: #4361ee;
     }
 
     /* ── Section Headers ───────────────────────────────────── */
@@ -349,6 +307,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 recorder = get_rec()
+is_rec = recorder.is_recording
 
 # ── Dependency pills ─────────────────────────────────────────────────────────
 deps = get_am().check_dependencies()
@@ -413,19 +372,39 @@ if not has_mo:
             st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  RECORDING BANNER (when active)
+#  RECORDING BANNER with JS timer (no Python rerun needed)
 # ══════════════════════════════════════════════════════════════════════════════
 
-if recorder.is_recording:
-    elapsed = recorder.elapsed_seconds
+if is_rec:
+    start_ts = recorder.elapsed_seconds
+    # JavaScript-based live timer — updates every second without Streamlit rerun
     st.markdown(f"""
     <div class="rec-banner">
         <div class="rec-left">
             <div class="rec-dot"></div>
             <span class="rec-label">RECORDING</span>
         </div>
-        <span class="rec-timer">{fmt_time(elapsed)}</span>
+        <span class="rec-timer" id="rec-timer">00:00</span>
     </div>
+    <script>
+        (function() {{
+            var startSeconds = {start_ts};
+            var timerEl = document.getElementById('rec-timer');
+            if (!timerEl) return;
+            function update() {{
+                startSeconds += 1;
+                var h = Math.floor(startSeconds / 3600);
+                var m = Math.floor((startSeconds % 3600) / 60);
+                var s = Math.floor(startSeconds % 60);
+                var pad = function(n) {{ return n < 10 ? '0' + n : '' + n; }};
+                timerEl.textContent = h > 0
+                    ? pad(h) + ':' + pad(m) + ':' + pad(s)
+                    : pad(m) + ':' + pad(s);
+            }}
+            update();
+            setInterval(update, 1000);
+        }})();
+    </script>
     """, unsafe_allow_html=True)
 
 # ── Status message ───────────────────────────────────────────────────────────
@@ -434,7 +413,6 @@ if st.session_state.last_message:
     {"success": st.success, "error": st.error, "warning": st.warning}.get(t, st.info)(
         st.session_state.last_message
     )
-    # Show ffmpeg log if there was an error
     if t == "error":
         log = recorder.last_error
         if log:
@@ -442,7 +420,7 @@ if st.session_state.last_message:
                 st.code(log, language=None)
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  SOURCE CARDS
+#  SOURCE CARDS — toggle on/off by clicking (works during recording too)
 # ══════════════════════════════════════════════════════════════════════════════
 
 scr_name = get_device_name(st.session_state.video_devices, st.session_state.sel_screen)
@@ -451,20 +429,29 @@ mic_name = get_device_name(st.session_state.audio_devices, st.session_state.sel_
 
 col1, col2, col3 = st.columns(3, gap="medium")
 
-# Helper to build card button content
+
 def card_label(icon, title, desc, device, is_on):
-    check = "✅" if is_on else "⬜"
+    check = "✅ ON" if is_on else "⬜ OFF"
     dev_html = f"\n\n`{device}`" if is_on else ""
     return f"{icon}\n\n**{title}**\n\n{desc}{dev_html}\n\n{check}"
 
-is_rec = recorder.is_recording
 
-# If recording, sync card state with actual running processes
-if is_rec:
-    live = recorder.active_sources
-    st.session_state.opt_screen = live["screen"]
-    st.session_state.opt_system_audio = live["sysaudio"]
-    st.session_state.opt_mic = live["mic"]
+def handle_toggle(source_key, toggle_fn):
+    """Handle a card toggle — works both before and during recording."""
+    new_val = not st.session_state[source_key]
+    if is_rec:
+        ok, msg = toggle_fn(new_val)
+        if ok:
+            st.session_state[source_key] = new_val
+            st.session_state.last_message = msg
+            st.session_state.last_message_type = "info"
+        else:
+            st.session_state.last_message = msg
+            st.session_state.last_message_type = "error"
+    else:
+        st.session_state[source_key] = new_val
+    st.rerun()
+
 
 with col1:
     cls = "active" if st.session_state.opt_screen else "inactive"
@@ -473,14 +460,7 @@ with col1:
         card_label("🖥️", "Screen", "Full display capture with cursor", scr_name, st.session_state.opt_screen),
         key="btn_screen", use_container_width=True,
     ):
-        new_val = not st.session_state.opt_screen
-        if is_rec:
-            ok, msg = recorder.toggle_screen(new_val)
-            if ok:
-                st.session_state.opt_screen = new_val
-        else:
-            st.session_state.opt_screen = new_val
-        st.rerun()
+        handle_toggle("opt_screen", recorder.toggle_screen)
     st.markdown('</div>', unsafe_allow_html=True)
 
 with col2:
@@ -490,14 +470,7 @@ with col2:
         card_label("🔊", "System Audio", "Teams · Zoom · YouTube via BlackHole", bh_name, st.session_state.opt_system_audio),
         key="btn_sysaudio", use_container_width=True,
     ):
-        new_val = not st.session_state.opt_system_audio
-        if is_rec:
-            ok, msg = recorder.toggle_sysaudio(new_val)
-            if ok:
-                st.session_state.opt_system_audio = new_val
-        else:
-            st.session_state.opt_system_audio = new_val
-        st.rerun()
+        handle_toggle("opt_system_audio", recorder.toggle_sysaudio)
     st.markdown('</div>', unsafe_allow_html=True)
 
 with col3:
@@ -507,14 +480,7 @@ with col3:
         card_label("🎙️", "Microphone", "Your voice and room audio", mic_name, st.session_state.opt_mic),
         key="btn_mic", use_container_width=True,
     ):
-        new_val = not st.session_state.opt_mic
-        if is_rec:
-            ok, msg = recorder.toggle_mic(new_val)
-            if ok:
-                st.session_state.opt_mic = new_val
-        else:
-            st.session_state.opt_mic = new_val
-        st.rerun()
+        handle_toggle("opt_mic", recorder.toggle_mic)
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ── Summary chips ────────────────────────────────────────────────────────────
@@ -551,7 +517,7 @@ st.markdown("")
 _, btn_center, _ = st.columns([1, 2, 1])
 
 with btn_center:
-    if not recorder.is_recording:
+    if not is_rec:
         if st.button(
             "⏺  Start Recording" + (f"  —  {n} source{'s' if n != 1 else ''}" if n else ""),
             type="primary",
@@ -585,10 +551,8 @@ with btn_center:
             st.session_state.last_message_type = "success" if ok else "error"
             st.rerun()
 
-# Auto-refresh timer
-if recorder.is_recording:
-    time.sleep(1)
-    st.rerun()
+# NO auto-refresh loop here — the JS timer handles the display.
+# The page only reruns when the user clicks something.
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  DEVICE SELECTOR (expandable)
@@ -654,7 +618,8 @@ with st.expander("🎛️  Device Selection & Advanced Settings", expanded=False
 st.markdown('<div class="section-head"><h3>📁 Recordings</h3></div>', unsafe_allow_html=True)
 
 recordings = sorted(
-    glob.glob(os.path.join(RECORDINGS_DIR, "*.mp4")),
+    glob.glob(os.path.join(RECORDINGS_DIR, "*.mp4"))
+    + glob.glob(os.path.join(RECORDINGS_DIR, "*.mov")),
     key=os.path.getmtime, reverse=True,
 )
 
@@ -668,6 +633,9 @@ if not recordings:
 else:
     for fp in recordings:
         fname = os.path.basename(fp)
+        # Skip hidden temp files
+        if fname.startswith(".tmp_"):
+            continue
         fsize = os.path.getsize(fp)
         fdate = datetime.fromtimestamp(os.path.getmtime(fp))
         tracks = get_track_count(fp)
@@ -675,7 +643,7 @@ else:
         icon = "🔗" if is_merged else "🎞️"
 
         with st.container():
-            c1, c2, c3, c4 = st.columns([3, 1, 1, 1])
+            c1, c2, c3, c4, c5 = st.columns([3, 1, 1, 1, 1])
 
             with c1:
                 st.markdown(f"**{icon} {fname}**")
@@ -685,19 +653,24 @@ else:
                 )
 
             with c2:
+                if st.button("▶️ Play", key=f"pl_{fname}", use_container_width=True):
+                    os.system(f'open "{fp}"')
+
+            with c3:
                 with open(fp, "rb") as f:
+                    mime = "video/mp4" if fp.endswith(".mp4") else "video/quicktime"
                     st.download_button(
-                        "⬇️ Download", f, fname, "video/mp4",
+                        "⬇️ Download", f, fname, mime,
                         key=f"dl_{fname}", use_container_width=True,
                     )
 
-            with c3:
+            with c4:
                 if tracks >= 2 and not is_merged:
                     if st.button("🔗 Merge", key=f"mg_{fname}", use_container_width=True):
                         st.session_state.merge_file = fp
                         st.rerun()
 
-            with c4:
+            with c5:
                 if st.button("📂 Reveal", key=f"rv_{fname}", use_container_width=True):
                     os.system(f'open -R "{fp}"')
 
