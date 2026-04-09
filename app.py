@@ -452,13 +452,12 @@ if st.session_state.last_message:
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  SOURCE CARDS — toggle on/off by clicking (works during recording too)
+#  Uses on_click callbacks for reliable single-click toggling
 # ══════════════════════════════════════════════════════════════════════════════
 
 scr_name = get_device_name(st.session_state.video_devices, st.session_state.sel_screen)
 bh_name = get_device_name(st.session_state.audio_devices, st.session_state.sel_blackhole)
 mic_name = get_device_name(st.session_state.audio_devices, st.session_state.sel_mic)
-
-col1, col2, col3 = st.columns(3, gap="medium")
 
 
 def card_label(icon, title, desc, device, is_on):
@@ -466,10 +465,10 @@ def card_label(icon, title, desc, device, is_on):
     return f"{icon}\n\n**{title}**\n\n{desc}{dev_html}"
 
 
-def handle_toggle(source_key, toggle_fn):
-    """Handle a card toggle — works both before and during recording."""
+def on_toggle(source_key, toggle_fn):
+    """on_click callback — runs BEFORE rerun, so state is updated atomically."""
     new_val = not st.session_state[source_key]
-    if is_rec:
+    if recorder.is_recording:
         ok, msg = toggle_fn(new_val)
         if ok:
             st.session_state[source_key] = new_val
@@ -480,37 +479,39 @@ def handle_toggle(source_key, toggle_fn):
             st.session_state.last_message_type = "error"
     else:
         st.session_state[source_key] = new_val
-    st.rerun()
+        st.session_state.last_message = ""
 
+
+col1, col2, col3 = st.columns(3, gap="medium")
 
 with col1:
     cls = "active" if st.session_state.opt_screen else "inactive"
     st.markdown(f'<div class="source-card-btn {cls}">', unsafe_allow_html=True)
-    if st.button(
+    st.button(
         card_label("🖥️", "Screen", "Full display capture with cursor", scr_name, st.session_state.opt_screen),
         key="btn_screen", use_container_width=True,
-    ):
-        handle_toggle("opt_screen", recorder.toggle_screen)
+        on_click=on_toggle, args=("opt_screen", recorder.toggle_screen),
+    )
     st.markdown('</div>', unsafe_allow_html=True)
 
 with col2:
     cls = "active" if st.session_state.opt_system_audio else "inactive"
     st.markdown(f'<div class="source-card-btn {cls}">', unsafe_allow_html=True)
-    if st.button(
+    st.button(
         card_label("🔊", "System Audio", "Teams · Zoom · YouTube via BlackHole", bh_name, st.session_state.opt_system_audio),
         key="btn_sysaudio", use_container_width=True,
-    ):
-        handle_toggle("opt_system_audio", recorder.toggle_sysaudio)
+        on_click=on_toggle, args=("opt_system_audio", recorder.toggle_sysaudio),
+    )
     st.markdown('</div>', unsafe_allow_html=True)
 
 with col3:
     cls = "active" if st.session_state.opt_mic else "inactive"
     st.markdown(f'<div class="source-card-btn {cls}">', unsafe_allow_html=True)
-    if st.button(
+    st.button(
         card_label("🎙️", "Microphone", "Your voice and room audio", mic_name, st.session_state.opt_mic),
         key="btn_mic", use_container_width=True,
-    ):
-        handle_toggle("opt_mic", recorder.toggle_mic)
+        on_click=on_toggle, args=("opt_mic", recorder.toggle_mic),
+    )
     st.markdown('</div>', unsafe_allow_html=True)
 
 # Count active sources for the record button

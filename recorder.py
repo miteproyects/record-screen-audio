@@ -9,6 +9,8 @@ Architecture (3 separate processes, individually toggleable):
 
 Each source can be toggled on/off mid-recording.
 PID state is persisted to disk so recording survives Streamlit reruns.
+A 'session_active' flag keeps the session alive even when all PIDs are 0
+(e.g. user toggled everything off temporarily).
 """
 
 import subprocess
@@ -46,7 +48,7 @@ class RecordingConfig:
 # ── State persistence ────────────────────────────────────────────────────────
 
 def _save_state(**kwargs):
-    """Save state, merging with existing state."""
+    """Merge kwargs into existing state on disk."""
     existing = _load_state() or {}
     existing.update(kwargs)
     with open(STATE_FILE, "w") as f:
@@ -86,18 +88,19 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
-def _kill_gracefully(pid: int, timeout: float = 10):
+def _kill_gracefully(pid: int, timeout: float = 3):
+    """Kill process: SIGINT first, SIGKILL after timeout. Fast timeout (3s)."""
     if not _pid_alive(pid):
         return
     try:
         os.kill(pid, signal.SIGINT)
         waited = 0.0
         while _pid_alive(pid) and waited < timeout:
-            time.sleep(0.5)
-            waited += 0.5
+            time.sleep(0.3)
+            waited += 0.3
         if _pid_alive(pid):
             os.kill(pid, signal.SIGKILL)
-            time.sleep(0.5)
+            time.sleep(0.3)
     except Exception:
         try:
             os.kill(pid, signal.SIGKILL)
@@ -123,22 +126,17 @@ class Recorder:
 
     @property
     def is_recording(self) -> bool:
+        """Check if a recording SESSION is active (not just if PIDs are alive).
+        The session_active flag keeps this True even if all sources are toggled off."""
         state = _load_state()
         if not state:
             return False
-        alive = any(
-            _pid_alive(state.get(k, 0))
-            for k in ["screen_pid", "sysaudio_pid", "mic_pid"]
-        )
-        if alive:
-            return True
-        _clear_state()
-        self._am.restore_settings()
-        return False
+        # Session is active if explicitly marked as such
+        return state.get("session_active", False)
 
     @property
     def active_sources(self) -> dict:
-        """Return which sources are currently active (process alive)."""
+        """Return which sources currently have a live process."""
         state = _load_state()
         if not state:
             return {"screen": False, "sysaudio": False, "mic": False}
@@ -159,7 +157,7 @@ class Recorder:
     @property
     def output_file(self) -> str:
         state = _load_state()
-        return state["output_file"] if state else ""
+        return state.get("output_file", "") if state else ""
 
     @property
     def elapsed_seconds(self) -> float:
@@ -275,8 +273,9 @@ class Recorder:
             self._am.restore_settings()
             return False, " ".join(errors) + f"\n{self.last_error}"
 
-        # Save full state
+        # Save full state — session_active keeps recording alive
         _overwrite_state({
+            "session_active": True,
             "output_file": output_file,
             "start_time": time.time(),
             "timestamp": timestamp,
@@ -309,16 +308,14 @@ class Recorder:
     def toggle_screen(self, enable: bool) -> tuple[bool, str]:
         """Toggle screen capture on/off during recording."""
         state = _load_state()
-        if not state:
+        if not state or not state.get("session_active"):
             return False, "No recording in progress."
 
         current_pid = state.get("screen_pid", 0)
         is_on = _pid_alive(current_pid)
 
         if enable and not is_on:
-            # Start screen capture
             timestamp = state.get("timestamp", datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
-            # Use a new tmp file with suffix to avoid conflicts
             screen_tmp = os.path.join(
                 self._recordings_dir, f".tmp_screen_{timestamp}_r.mov"
             )
@@ -329,15 +326,18 @@ class Recorder:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
-                _save_state(screen_pid=proc.pid, screen_tmp=screen_tmp)
-                _log(f"Screen started mid-recording, pid={proc.pid}")
-                return True, "Screen capture started"
+                time.sleep(0.5)
+                if _pid_alive(proc.pid):
+                    _save_state(screen_pid=proc.pid, screen_tmp=screen_tmp)
+                    _log(f"Screen started mid-recording, pid={proc.pid}")
+                    return True, "Screen capture started"
+                else:
+                    return False, "Screen capture exited immediately"
             except Exception as e:
                 return False, f"Failed: {e}"
 
         elif not enable and is_on:
-            # Stop screen capture
-            _kill_gracefully(current_pid)
+            _kill_gracefully(current_pid, timeout=3)
             _save_state(screen_pid=0)
             _log("Screen stopped mid-recording")
             return True, "Screen capture stopped"
@@ -347,14 +347,13 @@ class Recorder:
     def toggle_sysaudio(self, enable: bool) -> tuple[bool, str]:
         """Toggle system audio capture on/off during recording."""
         state = _load_state()
-        if not state:
+        if not state or not state.get("session_active"):
             return False, "No recording in progress."
 
         current_pid = state.get("sysaudio_pid", 0)
         is_on = _pid_alive(current_pid)
 
         if enable and not is_on:
-            # Activate Multi-Output if available
             if self._am.has_multi_output():
                 self._am.activate_multi_output()
 
@@ -366,22 +365,26 @@ class Recorder:
             )
             pid = self._start_audio_process(blackhole_idx, bitrate, sysaudio_tmp, "System audio (toggle)")
             if pid > 0:
-                _save_state(sysaudio_pid=pid, sysaudio_tmp=sysaudio_tmp, has_sysaudio=True)
-                return True, "System audio capture started"
+                time.sleep(0.5)
+                if _pid_alive(pid):
+                    _save_state(sysaudio_pid=pid, sysaudio_tmp=sysaudio_tmp, has_sysaudio=True)
+                    return True, "System audio started"
+                else:
+                    return False, "System audio process exited immediately"
             return False, "Failed to start system audio"
 
         elif not enable and is_on:
-            _kill_gracefully(current_pid)
+            _kill_gracefully(current_pid, timeout=3)
             _save_state(sysaudio_pid=0)
             _log("System audio stopped mid-recording")
-            return True, "System audio capture stopped"
+            return True, "System audio stopped"
 
         return True, "No change needed"
 
     def toggle_mic(self, enable: bool) -> tuple[bool, str]:
         """Toggle microphone capture on/off during recording."""
         state = _load_state()
-        if not state:
+        if not state or not state.get("session_active"):
             return False, "No recording in progress."
 
         current_pid = state.get("mic_pid", 0)
@@ -396,15 +399,19 @@ class Recorder:
             )
             pid = self._start_audio_process(mic_idx, bitrate, mic_tmp, "Mic (toggle)")
             if pid > 0:
-                _save_state(mic_pid=pid, mic_tmp=mic_tmp, has_mic=True)
-                return True, "Microphone capture started"
+                time.sleep(0.5)
+                if _pid_alive(pid):
+                    _save_state(mic_pid=pid, mic_tmp=mic_tmp, has_mic=True)
+                    return True, "Microphone started"
+                else:
+                    return False, "Mic process exited immediately"
             return False, "Failed to start microphone"
 
         elif not enable and is_on:
-            _kill_gracefully(current_pid)
+            _kill_gracefully(current_pid, timeout=3)
             _save_state(mic_pid=0)
             _log("Mic stopped mid-recording")
-            return True, "Microphone capture stopped"
+            return True, "Microphone stopped"
 
         return True, "No change needed"
 
@@ -443,22 +450,20 @@ class Recorder:
         screen_pid = state.get("screen_pid", 0)
         sysaudio_pid = state.get("sysaudio_pid", 0)
         mic_pid = state.get("mic_pid", 0)
-        output_file = state["output_file"]
+        output_file = state.get("output_file", "")
         screen_tmp = state.get("screen_tmp", "")
         sysaudio_tmp = state.get("sysaudio_tmp", "")
         mic_tmp = state.get("mic_tmp", "")
 
-        # Stop all processes gracefully
-        if mic_pid:
-            _kill_gracefully(mic_pid, timeout=10)
-        if sysaudio_pid:
-            _kill_gracefully(sysaudio_pid, timeout=10)
-        if screen_pid:
-            _kill_gracefully(screen_pid, timeout=10)
+        # Stop all live processes gracefully
+        for pid in [mic_pid, sysaudio_pid, screen_pid]:
+            if pid and _pid_alive(pid):
+                _kill_gracefully(pid, timeout=5)
 
         # Wait for files to finalize
         time.sleep(2)
 
+        # Clear session
         _clear_state()
         self._am.restore_settings()
 
@@ -473,6 +478,9 @@ class Recorder:
         _log(f"mic: {has_mic_file} ({mic_tmp})")
 
         # ── Merge based on what's available ──────────────────────────
+
+        if not output_file:
+            return False, "No output file configured."
 
         if has_screen and has_sysaudio and has_mic_file:
             merge_cmd = [
