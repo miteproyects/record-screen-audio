@@ -49,29 +49,33 @@ st.markdown("""
         margin-top: 0;
     }
 
-    /* ── Source Cards ───────────────────────────────────────── */
-    .source-card {
-        background: #ffffff;
-        border: 2px solid #e8e8e8;
-        border-radius: 16px;
-        padding: 1.5rem;
-        text-align: center;
-        transition: all 0.25s ease;
-        min-height: 160px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
+    /* ── Source Cards (clickable buttons) ──────────────────── */
+    .source-card-btn > button {
+        background: #ffffff !important;
+        border: 2px solid #e8e8e8 !important;
+        border-radius: 16px !important;
+        padding: 1.5rem 1rem !important;
+        text-align: center !important;
+        transition: all 0.25s ease !important;
+        min-height: 170px !important;
+        width: 100% !important;
+        cursor: pointer !important;
+        color: #1a1a2e !important;
     }
-    .source-card.active {
-        border-color: #4361ee;
-        background: linear-gradient(135deg, #f0f4ff 0%, #e8edff 100%);
-        box-shadow: 0 4px 20px rgba(67, 97, 238, 0.15);
+    .source-card-btn > button:hover {
+        border-color: #4361ee !important;
+        box-shadow: 0 4px 20px rgba(67, 97, 238, 0.15) !important;
+        transform: translateY(-2px) !important;
     }
-    .source-card.inactive {
-        opacity: 0.5;
-        border-color: #ddd;
-        background: #fafafa;
+    .source-card-btn.active > button {
+        border-color: #4361ee !important;
+        background: linear-gradient(135deg, #f0f4ff 0%, #e8edff 100%) !important;
+        box-shadow: 0 4px 20px rgba(67, 97, 238, 0.15) !important;
+    }
+    .source-card-btn.inactive > button {
+        opacity: 0.5 !important;
+        border-color: #ddd !important;
+        background: #fafafa !important;
     }
     .source-icon {
         font-size: 2.5rem;
@@ -96,6 +100,11 @@ st.markdown("""
         background: rgba(67, 97, 238, 0.08);
         padding: 2px 10px;
         border-radius: 20px;
+        display: inline-block;
+    }
+    .source-check {
+        margin-top: 0.4rem;
+        font-size: 1.2rem;
     }
 
     /* ── Big Record Button ─────────────────────────────────── */
@@ -442,53 +451,44 @@ mic_name = get_device_name(st.session_state.audio_devices, st.session_state.sel_
 
 col1, col2, col3 = st.columns(3, gap="medium")
 
+# Helper to build card button content
+def card_label(icon, title, desc, device, is_on):
+    check = "✅" if is_on else "⬜"
+    dev_html = f"\n\n`{device}`" if is_on else ""
+    return f"{icon}\n\n**{title}**\n\n{desc}{dev_html}\n\n{check}"
+
 with col1:
     cls = "active" if st.session_state.opt_screen else "inactive"
-    dev_tag = f'<div class="source-device">{scr_name}</div>' if st.session_state.opt_screen else ""
-    st.markdown(f"""
-    <div class="source-card {cls}">
-        <div class="source-icon">🖥️</div>
-        <div class="source-title">Screen</div>
-        <div class="source-desc">Full display capture with cursor</div>
-        {dev_tag}
-    </div>
-    """, unsafe_allow_html=True)
-    st.session_state.opt_screen = st.checkbox(
-        "Enable Screen", value=st.session_state.opt_screen,
-        disabled=recorder.is_recording, key="chk_screen", label_visibility="collapsed"
-    )
+    st.markdown(f'<div class="source-card-btn {cls}">', unsafe_allow_html=True)
+    if st.button(
+        card_label("🖥️", "Screen", "Full display capture with cursor", scr_name, st.session_state.opt_screen),
+        key="btn_screen", use_container_width=True,
+    ):
+        st.session_state.opt_screen = not st.session_state.opt_screen
+        st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
 with col2:
     cls = "active" if st.session_state.opt_system_audio else "inactive"
-    dev_tag = f'<div class="source-device">{bh_name}</div>' if st.session_state.opt_system_audio else ""
-    st.markdown(f"""
-    <div class="source-card {cls}">
-        <div class="source-icon">🔊</div>
-        <div class="source-title">System Audio</div>
-        <div class="source-desc">Teams · Zoom · YouTube via BlackHole</div>
-        {dev_tag}
-    </div>
-    """, unsafe_allow_html=True)
-    st.session_state.opt_system_audio = st.checkbox(
-        "Enable System Audio", value=st.session_state.opt_system_audio,
-        disabled=recorder.is_recording, key="chk_sysaudio", label_visibility="collapsed"
-    )
+    st.markdown(f'<div class="source-card-btn {cls}">', unsafe_allow_html=True)
+    if st.button(
+        card_label("🔊", "System Audio", "Teams · Zoom · YouTube via BlackHole", bh_name, st.session_state.opt_system_audio),
+        key="btn_sysaudio", use_container_width=True,
+    ):
+        st.session_state.opt_system_audio = not st.session_state.opt_system_audio
+        st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
 with col3:
     cls = "active" if st.session_state.opt_mic else "inactive"
-    dev_tag = f'<div class="source-device">{mic_name}</div>' if st.session_state.opt_mic else ""
-    st.markdown(f"""
-    <div class="source-card {cls}">
-        <div class="source-icon">🎙️</div>
-        <div class="source-title">Microphone</div>
-        <div class="source-desc">Your voice and room audio</div>
-        {dev_tag}
-    </div>
-    """, unsafe_allow_html=True)
-    st.session_state.opt_mic = st.checkbox(
-        "Enable Mic", value=st.session_state.opt_mic,
-        disabled=recorder.is_recording, key="chk_mic", label_visibility="collapsed"
-    )
+    st.markdown(f'<div class="source-card-btn {cls}">', unsafe_allow_html=True)
+    if st.button(
+        card_label("🎙️", "Microphone", "Your voice and room audio", mic_name, st.session_state.opt_mic),
+        key="btn_mic", use_container_width=True,
+    ):
+        st.session_state.opt_mic = not st.session_state.opt_mic
+        st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # ── Summary chips ────────────────────────────────────────────────────────────
 active_sources = []
