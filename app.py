@@ -382,6 +382,12 @@ if st.session_state.last_message:
     {"success": st.success, "error": st.error, "warning": st.warning}.get(t, st.info)(
         st.session_state.last_message
     )
+    # Show ffmpeg log if there was an error
+    if t == "error":
+        log = recorder.last_error
+        if log:
+            with st.expander("🔍 ffmpeg debug log", expanded=False):
+                st.code(log, language=None)
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  SOURCE CARDS
