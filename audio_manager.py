@@ -244,6 +244,72 @@ class AudioManager:
         except Exception:
             return False
 
+    def open_midi_setup(self) -> bool:
+        """Open Audio MIDI Setup app."""
+        try:
+            subprocess.Popen(
+                ["open", "/Applications/Utilities/Audio MIDI Setup.app"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            return True
+        except Exception:
+            return False
+
+    def create_multi_output_via_script(self) -> tuple[bool, str]:
+        """
+        Attempt to create a Multi-Output Device using AppleScript UI automation.
+        Requires Accessibility permissions for Terminal.
+        Falls back to opening Audio MIDI Setup with instructions.
+        """
+        script = '''
+        tell application "Audio MIDI Setup" to activate
+        delay 1.5
+
+        tell application "System Events"
+            tell process "Audio MIDI Setup"
+                -- Click the "+" button at bottom left
+                try
+                    click menu button 1 of splitter group 1 of window 1
+                    delay 0.5
+                    -- Select "Create Multi-Output Device"
+                    click menu item "Create Multi-Output Device" of menu 1 of menu button 1 of splitter group 1 of window 1
+                    delay 1
+                    return "created"
+                on error errMsg
+                    return "error: " & errMsg
+                end try
+            end tell
+        end tell
+        '''
+        try:
+            result = subprocess.run(
+                ["osascript", "-e", script],
+                capture_output=True, text=True, timeout=15,
+            )
+            output = result.stdout.strip()
+            if "created" in output:
+                return True, "Multi-Output Device created! Now check BlackHole 2ch and your speakers in the Audio MIDI Setup window."
+            else:
+                # Fallback: just open the app
+                self.open_midi_setup()
+                return False, f"Automatic creation failed. Audio MIDI Setup is open — please create it manually."
+        except Exception as e:
+            self.open_midi_setup()
+            return False, f"Automation not available. Audio MIDI Setup is open — please create it manually."
+
+    def list_output_devices(self) -> list[str]:
+        """List all available output devices."""
+        if not self._has_switch:
+            return []
+        try:
+            result = subprocess.run(
+                ["SwitchAudioSource", "-a", "-t", "output"],
+                capture_output=True, text=True, timeout=5,
+            )
+            return [l.strip() for l in result.stdout.splitlines() if l.strip()]
+        except Exception:
+            return []
+
     # ── Dependency Checks ────────────────────────────────────────────────
 
     def check_dependencies(self) -> dict[str, bool]:

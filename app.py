@@ -360,6 +360,49 @@ st.markdown(pills_html, unsafe_allow_html=True)
 if not all(deps.values()):
     st.error("Missing dependencies. Run `brew install ffmpeg switchaudio-osx` and install BlackHole from existential.audio/blackhole")
 
+# ── Multi-Output Device Setup ────────────────────────────────────────────────
+if not has_mo:
+    with st.container():
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
+                    border: 1px solid #ffb74d; border-radius: 12px;
+                    padding: 1.25rem 1.5rem; margin-bottom: 1rem;">
+            <div style="font-weight: 700; font-size: 1rem; margin-bottom: 0.5rem;">
+                ⚠️ Multi-Output Device Required
+            </div>
+            <div style="font-size: 0.88rem; color: #444; line-height: 1.6;">
+                Without it, BlackHole captures system audio but you <b>won't hear it</b>
+                (Teams, Zoom, YouTube will be silent during recording).<br>
+                The Multi-Output Device sends audio to <b>both</b> your speakers AND BlackHole.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        setup_col1, setup_col2 = st.columns(2)
+
+        with setup_col1:
+            if st.button("🔧 Auto-Create Multi-Output Device", type="primary", use_container_width=True):
+                ok, msg = get_am().create_multi_output_via_script()
+                if ok:
+                    st.success(msg)
+                else:
+                    st.warning(msg)
+                    st.markdown("""
+                    **Manual steps in Audio MIDI Setup:**
+                    1. Click **+** at bottom-left
+                    2. Select **"Create Multi-Output Device"**
+                    3. Check **BlackHole 2ch** and **MacBook Pro Speakers**
+                    4. Enable **Drift Correction** for BlackHole
+                    """)
+
+        with setup_col2:
+            if st.button("📖 Open Audio MIDI Setup", use_container_width=True):
+                get_am().open_midi_setup()
+                st.info("Audio MIDI Setup opened. Follow the steps above to create the device.")
+
+        if st.button("🔄 Check Again", use_container_width=True):
+            st.rerun()
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  RECORDING BANNER (when active)
 # ══════════════════════════════════════════════════════════════════════════════
